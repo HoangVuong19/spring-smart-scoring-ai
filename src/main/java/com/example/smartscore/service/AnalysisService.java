@@ -1,7 +1,13 @@
 package com.example.smartscore.service;
 
 import com.example.smartscore.dto.ClassRoomDto;
+import com.example.smartscore.dto.ExamDto;
+import com.example.smartscore.dto.request.ScoreRequest;
+import com.example.smartscore.dto.response.ScoreResponse;
+import com.example.smartscore.entity.Student;
 import com.example.smartscore.repository.ClassRoomRepository;
+import com.example.smartscore.repository.ExamTestRepository;
+import com.example.smartscore.repository.StudentRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -15,12 +21,15 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 public class AnalysisService {
     private final ChatClient chatClient;
     private final ClassRoomRepository classRoomRepository;
+    private final StudentRepository studentRepository;
+    private final ExamTestRepository examTestRepository;
     private final ObjectMapper objectMapper;
 
     public String analyze(String message) {
@@ -80,5 +89,95 @@ public class AnalysisService {
                     Hãy trả lời hoàn toàn bằng tiếng Việt.
                 """;
         return new SystemMessage(systemPromptText);
+    }
+
+    public ScoreResponse essayGrading(ScoreRequest scoreRequest) {
+
+        Optional<Student> studentOpt = studentRepository.findStudentById(scoreRequest.studentId());
+        if (studentOpt.isEmpty()) {
+            throw new RuntimeException("Student not found with id: " + scoreRequest.studentId());
+        }
+        Student student = studentOpt.get();
+
+        ExamDto exam = examTestRepository.findAllWithExamId(scoreRequest.questionId());
+        if (exam == null) {
+            throw new RuntimeException("No exam available for analysis.");
+        }
+        String barem = exam.barem();
+
+        ChatOptions chatOptions = ChatOptions.builder()
+                .temperature(0D)
+                .build();
+
+        Double score = calculateScore(scoreRequest.answer(), barem, chatOptions);
+        String feedback = generateFeedback(scoreRequest.answer(), barem, chatOptions);
+        student.setLiterature(score);
+        studentRepository.save(student);
+
+        return new ScoreResponse(
+                student.getClassRoom().getName(),
+                student.getName(),
+                String.valueOf(score),
+                feedback
+        );
+    }
+
+    private Double calculateScore(String studentAnswer, String barem, ChatOptions chatOptions) {
+        String promptTemplate = """
+                Dựa trên thang điểm (barem) sau đây:
+                --- BAREM ---
+                {barem}
+                --- KẾT THÚC BAREM ---
+                
+                Hãy đánh giá câu trả lời của sinh viên:
+                --- CÂU TRẢ LỜI ---
+                {studentAnswer}
+                --- KẾT THÚC CÂU TRẢ LỜI ---
+                
+                Ví dụ: Barem có 4 ý chính, mỗi ý đúng được 2.5 điểm, tổng điểm là 10.
+                Hãy tính tổng số điểm.
+                Chỉ trả về một con số duy nhất là tổng điểm.
+                """;
+
+        Prompt prompt = new PromptTemplate(promptTemplate).create(Map.of(
+                "barem", barem,
+                "studentAnswer", studentAnswer
+        ), chatOptions);
+
+        String scoreString = chatClient.prompt(prompt).call().content();
+
+        try {
+            if (scoreString != null) {
+                return Double.parseDouble(scoreString.trim());
+            }
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
+        return 0.0;
+    }
+
+    private String generateFeedback(String studentAnswer, String barem, ChatOptions chatOptions) {
+        String promptTemplate = """
+                Bạn là một trợ giảng AI. Dựa trên thang điểm (barem) sau đây:
+                --- BAREM ---
+                {barem}
+                --- KẾT THÚC BAREM ---
+                
+                Và câu trả lời của sinh viên:
+                --- CÂU TRẢ LỜI ---
+                {studentAnswer}
+                --- KẾT THÚC CÂU TRẢ LỜI ---
+                
+                Hãy đưa ra nhận xét chi tiết về câu trả lời của sinh viên.
+                Chỉ ra những ý đã làm được, những ý còn thiếu hoặc sai sót.
+                Đưa ra gợi ý để cải thiện câu trả lời.
+                """;
+
+        Prompt prompt = new PromptTemplate(promptTemplate).create(Map.of(
+                "barem", barem,
+                "studentAnswer", studentAnswer
+        ), chatOptions);
+
+        return chatClient.prompt(prompt).call().content();
     }
 }

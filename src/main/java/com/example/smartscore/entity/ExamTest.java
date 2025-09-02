@@ -7,27 +7,20 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "student")
+@Table(name = "exam_test")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class Student {
+public class ExamTest {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(nullable = false)
-    private String name;
+    private String question;
 
-    @Column(nullable = false)
-    private String gender;
-
-    @Column(nullable = true)
-    private Double literature;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "class_room_id")
-    private ClassRoom classRoom;
-
+    @Lob
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String barem;
 }
